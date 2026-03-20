@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var defaultConfig = `# LiteLLM Proxy Configuration
@@ -39,11 +40,25 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
 `
+
+// SecretsConfig stores how each secret should be resolved.
+type SecretsConfig struct {
+	Secrets map[string]SecretEntry `json:"secrets"`
+}
+
+// SecretEntry describes a single secret: either a direct value or a host command.
+type SecretEntry struct {
+	// "direct" or "command"
+	Mode string `json:"mode"`
+	// The literal value (mode=direct) or the shell command (mode=command).
+	Value string `json:"value"`
+}
 
 func cors(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
@@ -52,6 +67,16 @@ func jsonResp(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// secretsDir returns the directory where secret values are stored.
+func secretsDir(dataDir string) string {
+	return filepath.Join(dataDir, "secrets")
+}
+
+// secretsConfigPath returns the path to the secrets configuration file.
+func secretsConfigPath(dataDir string) string {
+	return filepath.Join(dataDir, "secrets-config.json")
 }
 
 func main() {
@@ -68,10 +93,28 @@ func main() {
 		os.Exit(0)
 	}
 
+	dataDir := filepath.Dir(*configPath)
 	ensureDefault(*configPath)
+	os.MkdirAll(secretsDir(dataDir), 0o700)
+
+	litellmURL := envOr("LITELLM_URL", "http://litellm:4000")
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	http.HandleFunc("/litellm-health", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := http.Get(litellmURL + "/health/liveliness")
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"status": "unreachable"})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		cors(w)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
 	})
 
 	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +163,111 @@ func main() {
 		}
 	})
 
+	// --- Secrets endpoints ---
+
+	// GET/POST /secrets-config -- manage how secrets are resolved (direct value vs command).
+	http.HandleFunc("/secrets-config", func(w http.ResponseWriter, r *http.Request) {
+		cfgFile := secretsConfigPath(dataDir)
+		switch r.Method {
+		case http.MethodOptions:
+			cors(w)
+			w.WriteHeader(http.StatusNoContent)
+
+		case http.MethodGet:
+			data, err := os.ReadFile(cfgFile)
+			if err != nil {
+				jsonResp(w, http.StatusOK, SecretsConfig{Secrets: map[string]SecretEntry{}})
+				return
+			}
+			cors(w)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(data)
+
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				jsonResp(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			var cfg SecretsConfig
+			if err := json.Unmarshal(body, &cfg); err != nil {
+				jsonResp(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+				return
+			}
+			if err := os.WriteFile(cfgFile, body, 0o600); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			jsonResp(w, http.StatusOK, map[string]string{"status": "saved"})
+
+		default:
+			jsonResp(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
+	// GET/POST/DELETE /secrets/<name> -- read/write/delete individual secret values.
+	http.HandleFunc("/secrets/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/secrets/")
+		if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+			jsonResp(w, http.StatusBadRequest, map[string]string{"error": "invalid secret name"})
+			return
+		}
+		secretFile := filepath.Join(secretsDir(dataDir), name)
+
+		switch r.Method {
+		case http.MethodOptions:
+			cors(w)
+			w.WriteHeader(http.StatusNoContent)
+
+		case http.MethodGet:
+			if _, err := os.Stat(secretFile); err != nil {
+				jsonResp(w, http.StatusOK, map[string]any{"name": name, "exists": false})
+				return
+			}
+			data, _ := os.ReadFile(secretFile)
+			val := strings.TrimSpace(string(data))
+			// Return a masked preview (first 4 chars + asterisks).
+			masked := mask(val)
+			jsonResp(w, http.StatusOK, map[string]any{
+				"name":   name,
+				"exists": true,
+				"masked": masked,
+				"length": len(val),
+			})
+
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				jsonResp(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			var payload struct {
+				Value string `json:"value"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				jsonResp(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+				return
+			}
+			val := strings.TrimSpace(payload.Value)
+			if err := os.MkdirAll(secretsDir(dataDir), 0o700); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := os.WriteFile(secretFile, []byte(val), 0o600); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			jsonResp(w, http.StatusOK, map[string]string{"status": "saved", "name": name})
+
+		case http.MethodDelete:
+			os.Remove(secretFile)
+			jsonResp(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
+
+		default:
+			jsonResp(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
 	log.Printf("[config-server] listening on %s, config at %s", *addr, *configPath)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
@@ -143,4 +291,12 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// mask returns a masked version of the value (first 4 chars visible).
+func mask(s string) string {
+	if len(s) <= 4 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:4] + strings.Repeat("*", len(s)-4)
 }

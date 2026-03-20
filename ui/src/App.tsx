@@ -3,13 +3,21 @@ import { Box, Tab, Tabs, Stack, Typography, Chip } from '@mui/material';
 import { createDockerDesktopClient } from '@docker/extension-api-client';
 import { DashboardTab } from './DashboardTab';
 import { ConfigTab } from './ConfigTab';
+import { SecretsTab } from './SecretsTab';
 import { useHealthCheck } from './useHealthCheck';
 
-const ddClient = createDockerDesktopClient();
+declare global {
+  interface Window { ddClient?: any; }
+}
+
+// In dev mode, window.ddClient may not be available
+const ddClient = window.ddClient
+  ? createDockerDesktopClient()
+  : (null as unknown as ReturnType<typeof createDockerDesktopClient>);
 
 export function App() {
   const [tab, setTab] = useState(0);
-  const healthy = useHealthCheck(ddClient);
+  const healthy = useHealthCheck();
 
   return (
     <Box sx={{ width: '100%', maxWidth: 900, mx: 'auto' }}>
@@ -32,12 +40,14 @@ export function App() {
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
           <Tab label="Dashboard" />
           <Tab label="Configuration" />
+          <Tab label="Secrets" />
         </Tabs>
       </Box>
 
       {/* Tab panels */}
       {tab === 0 && <DashboardTab ddClient={ddClient} healthy={healthy} />}
       {tab === 1 && <ConfigTab ddClient={ddClient} />}
+      {tab === 2 && <SecretsTab ddClient={ddClient} />}
     </Box>
   );
 }

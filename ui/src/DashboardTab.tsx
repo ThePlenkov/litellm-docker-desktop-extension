@@ -1,5 +1,4 @@
 import { Box, Button, Stack, Typography, Link } from '@mui/material';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { v1 } from '@docker/extension-api-client-types';
 
 const PROXY_URL = 'http://localhost:4000';
@@ -27,7 +26,6 @@ export function DashboardTab({ ddClient, healthy }: Props) {
       <Stack spacing={1.5} alignItems="center">
         <Button
           variant="contained"
-          endIcon={<OpenInNewIcon />}
           disabled={!healthy}
           onClick={() => open(`${PROXY_URL}/ui`)}
           sx={{ width: 240, bgcolor: '#e94560', '&:hover': { bgcolor: '#d13354' } }}
@@ -36,7 +34,6 @@ export function DashboardTab({ ddClient, healthy }: Props) {
         </Button>
         <Button
           variant="outlined"
-          endIcon={<OpenInNewIcon />}
           disabled={!healthy}
           onClick={() => open(PROXY_URL)}
           sx={{ width: 240 }}
@@ -55,7 +52,6 @@ export function DashboardTab({ ddClient, healthy }: Props) {
         >
           {PROXY_URL}
         </Link>
-        {' '}&middot; Key: <code>sk-1234</code>
       </Typography>
     </Box>
   );

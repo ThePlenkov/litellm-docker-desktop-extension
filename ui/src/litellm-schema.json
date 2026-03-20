@@ -1,0 +1,908 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LiteLLM Proxy Config",
+  "description": "Configuration file for LiteLLM AI Gateway (Proxy). Reference: https://docs.litellm.ai/docs/proxy/config_settings",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "environment_variables": {
+      "type": "object",
+      "description": "Environment variables to set for the proxy. Keys are variable names, values are strings. Use os.environ/<VAR> syntax to reference existing env vars.",
+      "additionalProperties": { "type": "string" }
+    },
+
+    "model_list": {
+      "type": "array",
+      "description": "List of model configurations available through the proxy.",
+      "items": {
+        "type": "object",
+        "required": ["model_name", "litellm_params"],
+        "additionalProperties": false,
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "description": "The name/alias for this model that clients will use in API requests."
+          },
+          "litellm_params": {
+            "type": "object",
+            "description": "Parameters passed to litellm.completion(). Must include 'model' at minimum.",
+            "required": ["model"],
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "The model identifier in provider/model format, e.g. 'openai/gpt-4', 'azure/my-deployment', 'anthropic/claude-3-opus-20240229'."
+              },
+              "api_key": {
+                "type": "string",
+                "description": "API key for this model. Can use os.environ/<VAR> syntax."
+              },
+              "api_base": {
+                "type": "string",
+                "description": "Base URL for the model's API endpoint."
+              },
+              "api_version": {
+                "type": "string",
+                "description": "API version (primarily for Azure OpenAI)."
+              },
+              "timeout": {
+                "type": ["number", "string"],
+                "description": "Request timeout in seconds for this specific model."
+              },
+              "stream_timeout": {
+                "type": ["number", "string"],
+                "description": "Streaming request timeout in seconds."
+              },
+              "max_retries": {
+                "type": "integer",
+                "description": "Maximum number of retries for this model."
+              },
+              "organization": {
+                "type": "string",
+                "description": "OpenAI organization ID."
+              },
+              "tpm": {
+                "type": "integer",
+                "description": "Tokens per minute limit for this deployment."
+              },
+              "rpm": {
+                "type": "integer",
+                "description": "Requests per minute limit for this deployment."
+              },
+              "input_cost_per_token": {
+                "type": "number",
+                "description": "Custom input cost per token (overrides default)."
+              },
+              "output_cost_per_token": {
+                "type": "number",
+                "description": "Custom output cost per token (overrides default)."
+              },
+              "aws_access_key_id": {
+                "type": "string",
+                "description": "AWS access key for Bedrock models."
+              },
+              "aws_secret_access_key": {
+                "type": "string",
+                "description": "AWS secret key for Bedrock models."
+              },
+              "aws_region_name": {
+                "type": "string",
+                "description": "AWS region for Bedrock models."
+              },
+              "vertex_project": {
+                "type": "string",
+                "description": "GCP project ID for Vertex AI models."
+              },
+              "vertex_location": {
+                "type": "string",
+                "description": "GCP region for Vertex AI models."
+              },
+              "vertex_credentials": {
+                "type": "string",
+                "description": "Path to GCP service account JSON for Vertex AI."
+              }
+            },
+            "additionalProperties": true
+          },
+          "model_info": {
+            "type": "object",
+            "description": "Additional metadata about the model.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for this model entry."
+              },
+              "mode": {
+                "type": "string",
+                "description": "The mode of the model.",
+                "enum": ["completion", "embedding", "image_generation", "moderation", "audio_transcription", "audio_speech"]
+              },
+              "input_cost_per_token": {
+                "type": "number",
+                "description": "Input cost per token."
+              },
+              "output_cost_per_token": {
+                "type": "number",
+                "description": "Output cost per token."
+              },
+              "max_tokens": {
+                "type": "integer",
+                "description": "Maximum output tokens for the model."
+              },
+              "max_input_tokens": {
+                "type": "integer",
+                "description": "Maximum input tokens for the model."
+              },
+              "base_model": {
+                "type": "string",
+                "description": "Base model name for cost tracking, e.g. 'gpt-4-1106-preview'."
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+
+    "litellm_settings": {
+      "type": "object",
+      "description": "Settings passed to the litellm module. Controls logging, caching, fallbacks, networking, and more.",
+      "additionalProperties": true,
+      "properties": {
+        "success_callback": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of success callbacks, e.g. ['langfuse', 'otel', 's3']."
+        },
+        "failure_callback": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of failure callbacks, e.g. ['sentry', 'langfuse']."
+        },
+        "callbacks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Callbacks that run on both success and failure, e.g. ['otel', 'langfuse']."
+        },
+        "service_callbacks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "System health monitoring - logs redis/postgres failures, e.g. ['datadog', 'prometheus']."
+        },
+        "turn_off_message_logging": {
+          "type": "boolean",
+          "description": "If true, prevents messages and responses from being logged to callbacks. Request metadata is still logged."
+        },
+        "modify_params": {
+          "type": "boolean",
+          "description": "If true, allows modifying request parameters before sending to the LLM provider."
+        },
+        "enable_preview_features": {
+          "type": "boolean",
+          "description": "If true, enables preview features such as Azure O1 models with streaming."
+        },
+        "redact_user_api_key_info": {
+          "type": "boolean",
+          "description": "If true, redacts user API key info (hashed token, user_id, team_id) from logs."
+        },
+        "langfuse_default_tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Default tags for Langfuse logging, e.g. ['cache_hit', 'proxy_base_url', 'user_api_key_alias']."
+        },
+        "request_timeout": {
+          "type": "integer",
+          "description": "LLM request timeout in seconds. Default: 6000."
+        },
+        "force_ipv4": {
+          "type": "boolean",
+          "description": "If true, forces IPv4 for all LLM requests."
+        },
+        "set_verbose": {
+          "type": "boolean",
+          "description": "[DEPRECATED] Use --debug/--detailed_debug CLI flags or LITELLM_LOG env var instead."
+        },
+        "json_logs": {
+          "type": "boolean",
+          "description": "If true, logs will be in JSON format."
+        },
+        "default_fallbacks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Fallback models if a specific model group is misconfigured, e.g. ['claude-opus']."
+        },
+        "content_policy_fallbacks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+          "description": "Fallbacks for ContentPolicyViolationErrors, e.g. [{'gpt-3.5-turbo': ['claude-opus']}]."
+        },
+        "context_window_fallbacks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+          "description": "Fallbacks for ContextWindowExceededErrors, e.g. [{'gpt-3.5-turbo': ['gpt-4', 'claude-opus']}]."
+        },
+        "mcp_aliases": {
+          "type": "object",
+          "description": "Maps friendly aliases to MCP server names. Only the first alias for each server is used.",
+          "additionalProperties": { "type": "string" }
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "If true, enables caching."
+        },
+        "cache_params": {
+          "type": "object",
+          "description": "Cache configuration parameters.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["local", "redis", "s3", "gcs"],
+              "description": "Type of cache to initialize."
+            },
+            "host": { "type": "string", "description": "Redis host address." },
+            "port": { "type": "integer", "description": "Redis port number." },
+            "password": { "type": "string", "description": "Redis password." },
+            "namespace": { "type": "string", "description": "Redis namespace." },
+            "max_connections": { "type": "integer", "description": "Max Redis connections." },
+            "redis_startup_nodes": {
+              "type": "array",
+              "items": { "type": "object", "properties": { "host": { "type": "string" }, "port": { "type": "string" } } },
+              "description": "Redis cluster startup nodes."
+            },
+            "service_name": { "type": "string", "description": "Redis Sentinel service name." },
+            "sentinel_nodes": { "type": "array", "description": "Redis Sentinel nodes." },
+            "ssl": { "type": "boolean", "description": "Enable SSL for Redis connections." },
+            "ttl": { "type": "integer", "description": "Time-to-live for cached items in seconds." },
+            "mode": {
+              "type": "string",
+              "enum": ["default_off", "default_on"],
+              "description": "Cache mode. 'default_off' requires opt-in per call."
+            },
+            "supported_call_types": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["acompletion", "atext_completion", "aembedding", "atranscription"] },
+              "description": "Call types that support caching."
+            },
+            "s3_bucket_name": { "type": "string", "description": "S3 bucket name for caching." },
+            "s3_region_name": { "type": "string", "description": "S3 region name." },
+            "s3_aws_access_key_id": { "type": "string", "description": "S3 access key ID." },
+            "s3_aws_secret_access_key": { "type": "string", "description": "S3 secret access key." },
+            "s3_endpoint_url": { "type": "string", "description": "S3 endpoint URL." },
+            "gcs_bucket_name": { "type": "string", "description": "GCS bucket name." },
+            "gcs_path_service_account": { "type": "string", "description": "Path to GCS service account JSON." },
+            "gcs_path": { "type": "string", "description": "GCS path prefix." },
+            "qdrant_semantic_cache_embedding_model": { "type": "string", "description": "Embedding model for Qdrant semantic cache." },
+            "qdrant_collection_name": { "type": "string", "description": "Qdrant collection name." },
+            "qdrant_quantization_config": { "type": "string", "description": "Qdrant quantization config." },
+            "qdrant_semantic_cache_vector_size": { "type": "integer", "description": "Vector size for Qdrant semantic cache." },
+            "similarity_threshold": { "type": "number", "description": "Similarity threshold for semantic cache." }
+          },
+          "additionalProperties": true
+        },
+        "disable_end_user_cost_tracking": {
+          "type": "boolean",
+          "description": "If true, turns off end user cost tracking on prometheus metrics and spend logs."
+        },
+        "disable_end_user_cost_tracking_prometheus_only": {
+          "type": "boolean",
+          "description": "If true, turns off end user cost tracking on prometheus metrics only."
+        },
+        "key_generation_settings": {
+          "type": "object",
+          "description": "Restricts who can generate keys.",
+          "additionalProperties": true
+        },
+        "disable_add_transform_inline_image_block": {
+          "type": "boolean",
+          "description": "For Fireworks AI - if true, turns off auto-add of #transform=inline to image URLs."
+        },
+        "use_chat_completions_url_for_anthropic_messages": {
+          "type": "boolean",
+          "description": "If true, routes /v1/messages through chat/completions instead of the Responses API."
+        },
+        "disable_hf_tokenizer_download": {
+          "type": "boolean",
+          "description": "If true, defaults to the OpenAI tokenizer for all models (including HuggingFace)."
+        },
+        "enable_json_schema_validation": {
+          "type": "boolean",
+          "description": "If true, enables JSON schema validation for all requests."
+        },
+        "enable_key_alias_format_validation": {
+          "type": "boolean",
+          "description": "If true, validates key_alias format on /key/generate and /key/update."
+        },
+        "disable_copilot_system_to_assistant": {
+          "type": "boolean",
+          "description": "[DEPRECATED] GitHub Copilot API now supports system prompts."
+        }
+      }
+    },
+
+    "callback_settings": {
+      "type": "object",
+      "description": "Callback-specific settings.",
+      "properties": {
+        "otel": {
+          "type": "object",
+          "description": "OpenTelemetry callback settings.",
+          "properties": {
+            "message_logging": {
+              "type": "boolean",
+              "description": "If true, enables message logging for OTEL."
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "general_settings": {
+      "type": "object",
+      "description": "General proxy settings including auth, database, alerting, and operational controls.",
+      "additionalProperties": true,
+      "properties": {
+        "completion_model": {
+          "type": "string",
+          "description": "Default model for completions when 'model' is not specified in the request."
+        },
+        "store_prompts_in_spend_logs": {
+          "type": "boolean",
+          "description": "If true, stores prompts and responses in spend logs table."
+        },
+        "forward_client_headers_to_llm_api": {
+          "type": "boolean",
+          "description": "If true, forwards client headers (x-* and anthropic-beta) to the backend LLM."
+        },
+        "disable_spend_logs": {
+          "type": "boolean",
+          "description": "If true, turns off writing each transaction to the database."
+        },
+        "disable_spend_updates": {
+          "type": "boolean",
+          "description": "If true, turns off all spend updates to the DB including key/user/team spend."
+        },
+        "disable_master_key_return": {
+          "type": "boolean",
+          "description": "If true, turns off returning master key on UI (/user/info endpoint)."
+        },
+        "disable_retry_on_max_parallel_request_limit_error": {
+          "type": "boolean",
+          "description": "If true, turns off retries when max parallel request limit is reached."
+        },
+        "disable_reset_budget": {
+          "type": "boolean",
+          "description": "If true, turns off reset budget scheduled task."
+        },
+        "disable_adding_master_key_hash_to_db": {
+          "type": "boolean",
+          "description": "If true, turns off storing master key hash in DB."
+        },
+        "disable_responses_id_security": {
+          "type": "boolean",
+          "description": "If true, disables response ID security checks."
+        },
+        "enable_jwt_auth": {
+          "type": "boolean",
+          "description": "If true, allows proxy admin to auth via JWT tokens with 'litellm_proxy_admin' in claims."
+        },
+        "enforce_user_param": {
+          "type": "boolean",
+          "description": "If true, requires all OpenAI endpoint requests to have a 'user' param."
+        },
+        "reject_clientside_metadata_tags": {
+          "type": "boolean",
+          "description": "If true, rejects requests with client-side 'metadata.tags'."
+        },
+        "allowed_routes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of allowed proxy API routes (currently JWT-Auth only)."
+        },
+        "key_management_system": {
+          "type": "string",
+          "description": "Key management system to use.",
+          "enum": ["google_kms", "azure_kms", "aws_kms", "local"]
+        },
+        "master_key": {
+          "type": "string",
+          "description": "The master key for the proxy."
+        },
+        "database_url": {
+          "type": "string",
+          "description": "The database connection URL (PostgreSQL)."
+        },
+        "database_connection_pool_limit": {
+          "type": "integer",
+          "description": "Database connection pool limit. Default: 10."
+        },
+        "database_connection_timeout": {
+          "type": "integer",
+          "description": "Database connection timeout in seconds. Default: 60."
+        },
+        "allow_requests_on_db_unavailable": {
+          "type": "boolean",
+          "description": "If true, allows requests when DB is unreachable. Only use in VPC deployments."
+        },
+        "custom_auth": {
+          "type": "string",
+          "description": "Path to custom authentication logic."
+        },
+        "max_parallel_requests": {
+          "type": "integer",
+          "description": "Max parallel requests allowed per deployment."
+        },
+        "global_max_parallel_requests": {
+          "type": "integer",
+          "description": "Max parallel requests allowed on the proxy overall."
+        },
+        "infer_model_from_keys": {
+          "type": "boolean",
+          "description": "If true, infers the model from the provided keys."
+        },
+        "background_health_checks": {
+          "type": "boolean",
+          "description": "If true, enables background health checks."
+        },
+        "health_check_interval": {
+          "type": "integer",
+          "description": "Interval for health checks in seconds."
+        },
+        "health_check_details": {
+          "type": "boolean",
+          "description": "If false, hides health check details (e.g. remaining rate limit)."
+        },
+        "alerting": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["slack", "email"] },
+          "description": "List of alerting methods."
+        },
+        "alerting_threshold": {
+          "type": "integer",
+          "description": "Threshold for triggering alerts."
+        },
+        "alerting_args": {
+          "type": "object",
+          "description": "Arguments for Slack alerting.",
+          "additionalProperties": true
+        },
+        "alert_types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Control list of alert types to send to Slack."
+        },
+        "alert_to_webhook_url": {
+          "type": "object",
+          "description": "Map alert types to webhook URLs.",
+          "additionalProperties": { "type": "string" }
+        },
+        "use_client_credentials_pass_through_routes": {
+          "type": "boolean",
+          "description": "If true, uses client credentials for all pass-through routes (/vertex-ai, /bedrock)."
+        },
+        "public_routes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[Enterprise] Control list of public routes."
+        },
+        "enforced_params": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[Enterprise] Params that must be included in all requests."
+        },
+        "enable_oauth2_auth": {
+          "type": "boolean",
+          "description": "[Enterprise] If true, enables OAuth2.0 authentication."
+        },
+        "enable_oauth2_proxy_auth": {
+          "type": "boolean",
+          "description": "[Enterprise] If true, enables OAuth2.0 proxy authentication."
+        },
+        "use_x_forwarded_for": {
+          "type": ["string", "boolean"],
+          "description": "If true, uses X-Forwarded-For header for client IP."
+        },
+        "service_account_settings": {
+          "type": "object",
+          "description": "Settings that only apply to service account keys.",
+          "additionalProperties": true
+        },
+        "image_generation_model": {
+          "type": "string",
+          "description": "Default model for image generation (ignores model set in request)."
+        },
+        "store_model_in_db": {
+          "type": "boolean",
+          "description": "If true, stores model + credential info in the DB."
+        },
+        "supported_db_objects": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["models", "mcp", "guardrails", "vector_stores", "pass_through_endpoints", "prompts", "model_cost_map"] },
+          "description": "Fine-grained control over which object types to load from DB when store_model_in_db is true."
+        },
+        "user_mcp_management_mode": {
+          "type": "string",
+          "enum": ["restricted", "view_all"],
+          "description": "Controls MCP dashboard visibility for non-admins."
+        },
+        "maximum_spend_logs_retention_period": {
+          "type": "string",
+          "description": "Max time to retain spend logs before deletion, e.g. '30d'."
+        },
+        "maximum_spend_logs_retention_interval": {
+          "type": "string",
+          "description": "Interval for spend log cleanup task, e.g. '1d'."
+        },
+        "max_request_size_mb": {
+          "type": "integer",
+          "description": "Max request size in MB. Requests above this are rejected."
+        },
+        "max_response_size_mb": {
+          "type": "integer",
+          "description": "Max response size in MB. LLM responses above this are not sent."
+        },
+        "proxy_budget_rescheduler_min_time": {
+          "type": "integer",
+          "description": "Min seconds between budget reset checks. Default: 597."
+        },
+        "proxy_budget_rescheduler_max_time": {
+          "type": "integer",
+          "description": "Max seconds between budget reset checks. Default: 605."
+        },
+        "proxy_batch_write_at": {
+          "type": "integer",
+          "description": "Seconds before batch writing spend logs to DB. Default: 10."
+        },
+        "proxy_batch_polling_interval": {
+          "type": "integer",
+          "description": "Seconds to wait before polling a batch for completion. Default: 6000."
+        },
+        "custom_key_generate": {
+          "type": "string",
+          "description": "Custom function for key generation."
+        },
+        "allowed_ips": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of IPs allowed to access the proxy."
+        },
+        "embedding_model": {
+          "type": "string",
+          "description": "Default model for embeddings (ignores model set in request)."
+        },
+        "moderation_model": {
+          "type": "string",
+          "description": "Default model for moderation."
+        },
+        "default_team_disabled": {
+          "type": "boolean",
+          "description": "If true, users cannot create 'personal' keys (keys with no team_id)."
+        },
+        "key_management_settings": {
+          "type": "object",
+          "description": "Settings for key management system (AWS KMS, Azure Key Vault, etc.).",
+          "additionalProperties": true
+        },
+        "allow_user_auth": {
+          "type": "boolean",
+          "description": "[Deprecated] Old approach for user authentication."
+        },
+        "user_api_key_cache_ttl": {
+          "type": "integer",
+          "description": "Time (seconds) to cache user API keys in memory."
+        },
+        "disable_prisma_schema_update": {
+          "type": "boolean",
+          "description": "If true, turns off automatic schema updates to DB."
+        },
+        "litellm_key_header_name": {
+          "type": "string",
+          "description": "Custom header name for passing LiteLLM keys."
+        },
+        "custom_sso": {
+          "type": "string",
+          "description": "Path to Python file implementing custom SSO logic."
+        },
+        "allow_client_side_credentials": {
+          "type": "boolean",
+          "description": "If true, allows passing client-side credentials to the proxy."
+        },
+        "admin_only_routes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "[Enterprise] Routes only accessible to admin users."
+        },
+        "use_azure_key_vault": {
+          "type": "boolean",
+          "description": "If true, loads keys from Azure Key Vault."
+        },
+        "use_google_kms": {
+          "type": "boolean",
+          "description": "If true, loads keys from Google KMS."
+        },
+        "spend_report_frequency": {
+          "type": "string",
+          "description": "How often to send spend reports, e.g. '1d', '7d', '30d'."
+        },
+        "ui_access_mode": {
+          "type": "string",
+          "enum": ["admin_only", "all"],
+          "description": "Restricts UI access. 'admin_only' limits to admin users."
+        },
+        "litellm_jwtauth": {
+          "type": "object",
+          "description": "Settings for JWT authentication.",
+          "additionalProperties": true
+        },
+        "litellm_license": {
+          "type": "string",
+          "description": "License key for the proxy."
+        },
+        "oauth2_config_mappings": {
+          "type": "object",
+          "description": "OAuth2 config mappings.",
+          "additionalProperties": { "type": "string" }
+        },
+        "pass_through_endpoints": {
+          "type": "array",
+          "description": "Pass-through endpoint configurations.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "forward_openai_org_id": {
+          "type": "boolean",
+          "description": "If true, forwards OpenAI Organization ID to the backend LLM call."
+        }
+      }
+    },
+
+    "router_settings": {
+      "type": "object",
+      "description": "Router settings for load balancing, routing strategy, retries, and fallbacks. Settings here override litellm_settings.",
+      "additionalProperties": true,
+      "properties": {
+        "routing_strategy": {
+          "type": "string",
+          "description": "Strategy for routing requests.",
+          "enum": ["simple-shuffle", "least-busy", "usage-based-routing", "latency-based-routing"],
+          "default": "simple-shuffle"
+        },
+        "redis_host": {
+          "type": "string",
+          "description": "Redis host for shared TPM/RPM tracking across proxy instances."
+        },
+        "redis_password": {
+          "type": "string",
+          "description": "Redis password."
+        },
+        "redis_port": {
+          "type": ["string", "integer"],
+          "description": "Redis port."
+        },
+        "redis_db": {
+          "type": "integer",
+          "description": "Redis database number."
+        },
+        "redis_url": {
+          "type": "string",
+          "description": "Redis URL. Note: known performance issue with Redis URL."
+        },
+        "enable_pre_call_checks": {
+          "type": "boolean",
+          "description": "If true, checks if a call is within the model's context window before making the call."
+        },
+        "allowed_fails": {
+          "type": "integer",
+          "description": "Number of failures allowed before cooling down a model."
+        },
+        "cooldown_time": {
+          "type": "integer",
+          "description": "Duration (seconds) to cooldown a model after exceeding allowed failures."
+        },
+        "disable_cooldowns": {
+          "type": "boolean",
+          "description": "If true, disables cooldowns for all models."
+        },
+        "enable_tag_filtering": {
+          "type": "boolean",
+          "description": "If true, enables tag-based routing for requests."
+        },
+        "tag_filtering_match_any": {
+          "type": "boolean",
+          "description": "Tag matching behavior. true: match ANY tag; false: match ALL tags."
+        },
+        "retry_policy": {
+          "type": "object",
+          "description": "Retry policy for different exception types.",
+          "properties": {
+            "AuthenticationErrorRetries": { "type": "integer" },
+            "TimeoutErrorRetries": { "type": "integer" },
+            "RateLimitErrorRetries": { "type": "integer" },
+            "ContentPolicyViolationErrorRetries": { "type": "integer" },
+            "InternalServerErrorRetries": { "type": "integer" }
+          },
+          "additionalProperties": { "type": "integer" }
+        },
+        "allowed_fails_policy": {
+          "type": "object",
+          "description": "Allowed failures per error type before cooling down a deployment.",
+          "properties": {
+            "BadRequestErrorAllowedFails": { "type": "integer" },
+            "AuthenticationErrorAllowedFails": { "type": "integer" },
+            "TimeoutErrorAllowedFails": { "type": "integer" },
+            "RateLimitErrorAllowedFails": { "type": "integer" },
+            "ContentPolicyViolationErrorAllowedFails": { "type": "integer" },
+            "InternalServerErrorAllowedFails": { "type": "integer" }
+          },
+          "additionalProperties": { "type": "integer" }
+        },
+        "content_policy_fallbacks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+          "description": "Fallback models for content policy violations."
+        },
+        "fallbacks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+          "description": "Fallback models for all error types."
+        },
+        "context_window_fallbacks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+          "description": "Fallback models for context window violations."
+        },
+        "default_fallbacks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Fallbacks to try if no model group-specific fallbacks are defined."
+        },
+        "num_retries": {
+          "type": "integer",
+          "description": "Number of retries for a request. Default: 3."
+        },
+        "timeout": {
+          "type": "number",
+          "description": "Default timeout for a request in seconds. Default: 600."
+        },
+        "stream_timeout": {
+          "type": "number",
+          "description": "Default timeout for streaming requests. Falls back to 'timeout' value."
+        },
+        "max_fallbacks": {
+          "type": "integer",
+          "description": "Maximum number of fallbacks to try. Default: 5."
+        },
+        "default_max_parallel_requests": {
+          "type": "integer",
+          "description": "Default max parallel requests per deployment."
+        },
+        "default_priority": {
+          "type": "integer",
+          "description": "Default priority for requests (scheduler_acompletion only)."
+        },
+        "polling_interval": {
+          "type": "number",
+          "description": "Queue polling frequency in seconds (scheduler_acompletion only). Default: 0.003."
+        },
+        "default_litellm_params": {
+          "type": "object",
+          "description": "Default litellm params added to all requests (e.g. temperature, max_tokens).",
+          "additionalProperties": true
+        },
+        "debug_level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO"],
+          "description": "Debug level for the router logging. Default: INFO."
+        },
+        "client_ttl": {
+          "type": "integer",
+          "description": "TTL for cached clients in seconds. Default: 3600."
+        },
+        "cache_kwargs": {
+          "type": "object",
+          "description": "Additional keyword arguments for cache initialization.",
+          "additionalProperties": true
+        },
+        "routing_strategy_args": {
+          "type": "object",
+          "description": "Additional args for the routing strategy.",
+          "additionalProperties": true
+        },
+        "model_group_alias": {
+          "type": "object",
+          "description": "Model group alias mapping, e.g. {'claude-3-haiku': 'claude-3-haiku-20240229'}.",
+          "additionalProperties": { "type": "string" }
+        },
+        "caching_groups": {
+          "type": "array",
+          "description": "Model groups for caching across model groups.",
+          "items": { "type": "array", "items": { "type": "string" } }
+        },
+        "cache_responses": {
+          "type": "boolean",
+          "description": "If true, caches LLM responses. Default: false."
+        },
+        "set_verbose": {
+          "type": "boolean",
+          "description": "[DEPRECATED] If true, sets logging to verbose."
+        },
+        "retry_after": {
+          "type": "integer",
+          "description": "Seconds to wait before retrying. Default: 0. Overridden by x-retry-after."
+        },
+        "provider_budget_config": {
+          "type": "object",
+          "description": "Provider budget configuration, e.g. $100/day to OpenAI.",
+          "additionalProperties": true
+        },
+        "model_group_retry_policy": {
+          "type": "object",
+          "description": "[SDK-only] Retry policy per model group.",
+          "additionalProperties": true
+        },
+        "optional_pre_call_checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["router_budget_limiting", "prompt_caching", "responses_api_deployment_check", "encrypted_content_affinity", "deployment_affinity", "session_affinity", "forward_client_headers_by_model_group"]
+          },
+          "description": "Pre-call checks to add to the router."
+        },
+        "deployment_affinity_ttl_seconds": {
+          "type": "integer",
+          "description": "TTL (seconds) for user-key to deployment affinity mapping. Default: 3600."
+        },
+        "ignore_invalid_deployments": {
+          "type": "boolean",
+          "description": "If true, ignores invalid deployments. Default for proxy: true."
+        },
+        "search_tools": {
+          "type": "array",
+          "description": "Search tool configurations for Search API integration.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "guardrail_list": {
+          "type": "array",
+          "description": "Guardrail configurations for guardrail load balancing.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+
+    "assistant_settings": {
+      "type": "object",
+      "description": "Settings for the OpenAI Assistants API integration.",
+      "additionalProperties": true
+    },
+
+    "guardrails": {
+      "type": "array",
+      "description": "Guardrail configurations for content filtering and safety.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "guardrail_name": { "type": "string", "description": "Name of the guardrail." },
+          "litellm_params": {
+            "type": "object",
+            "properties": {
+              "guardrail": { "type": "string", "description": "Guardrail provider/type." },
+              "mode": { "type": "string", "description": "Guardrail mode." },
+              "api_key": { "type": "string" },
+              "api_base": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

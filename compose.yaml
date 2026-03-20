@@ -12,18 +12,70 @@ services:
       retries: 3
       start_period: 2s
 
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm-internal-db
+    volumes:
+      - litellm-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - litellm-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable
     ports:
       - "4000:4000"
     environment:
+      - DATABASE_URL=postgresql://litellm:litellm-internal-db@postgres:5432/litellm
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
-    command: ["--config", "/data/config.yaml", "--port", "4000"]
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - LITELLM_BASE_URL=${LITELLM_BASE_URL:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Read secrets from the shared volume (written by the Secrets tab UI).
+        # Volume secrets override the environment defaults above.
+        if [ -f /data/secrets/master_key ]; then
+          export LITELLM_MASTER_KEY="$(cat /data/secrets/master_key)"
+          echo "[entrypoint] master_key loaded"
+        fi
+        if [ -f /data/secrets/api_key ]; then
+          export LITELLM_API_KEY="$(cat /data/secrets/api_key)"
+          echo "[entrypoint] api_key loaded"
+        fi
+        if [ -f /data/secrets/base_url ]; then
+          export LITELLM_BASE_URL="$(cat /data/secrets/base_url)"
+          echo "[entrypoint] base_url loaded"
+        fi
+        exec litellm --config /data/config.yaml --port 4000
     volumes:
       - litellm-config:/data
     depends_on:
       config-server:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   litellm-config:
+  litellm-db:
+  litellm-redis:

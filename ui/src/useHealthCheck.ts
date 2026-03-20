@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { v1 } from '@docker/extension-api-client-types';
 
-export function useHealthCheck(
-  ddClient: v1.DockerDesktopClient,
-  intervalMs = 5000,
-): boolean | null {
+export function useHealthCheck(intervalMs = 5000): boolean | null {
   const [healthy, setHealthy] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -12,8 +8,10 @@ export function useHealthCheck(
 
     async function check() {
       try {
-        await ddClient.extension.vm?.service?.get(':4000/health/liveliness');
-        if (active) setHealthy(true);
+        const res = await fetch('http://localhost:4000/health/liveliness', {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (active) setHealthy(res.ok);
       } catch {
         if (active) setHealthy(false);
       }
@@ -22,7 +20,7 @@ export function useHealthCheck(
     check();
     const id = setInterval(check, intervalMs);
     return () => { active = false; clearInterval(id); };
-  }, [ddClient, intervalMs]);
+  }, [intervalMs]);
 
   return healthy;
 }

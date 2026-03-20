@@ -9,5 +9,26 @@
   },
   "vm": {
     "composefile": "compose.yaml"
+  },
+  "host": {
+    "binaries": [
+      {
+        "darwin": [
+          {
+            "path": "/host/darwin/secret-helper"
+          }
+        ],
+        "linux": [
+          {
+            "path": "/host/linux/secret-helper"
+          }
+        ],
+        "windows": [
+          {
+            "path": "/host/windows/secret-helper.exe"
+          }
+        ]
+      }
+    ]
   }
 }
