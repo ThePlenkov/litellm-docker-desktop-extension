@@ -1,8 +1,21 @@
 services:
+  config-server:
+    image: litellm/config-server:latest
+    volumes:
+      - litellm-config:/data
+
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable
     ports:
       - "4000:4000"
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
-    command: ["--port", "4000"]
+    command: ["--config", "/data/config.yaml", "--port", "4000"]
+    volumes:
+      - litellm-config:/data
+    depends_on:
+      config-server:
+        condition: service_healthy
+
+volumes:
+  litellm-config:
