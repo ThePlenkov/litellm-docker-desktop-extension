@@ -1,0 +1,8 @@
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    ports:
+      - "4000:4000"
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
+    command: ["--port", "4000"]
