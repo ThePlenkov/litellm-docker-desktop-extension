@@ -1,8 +1,16 @@
 services:
   config-server:
     image: litellm/config-server:latest
+    ports:
+      - "4001:8080"
     volumes:
       - litellm-config:/data
+    healthcheck:
+      test: ["CMD", "/config-server", "-health-check"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
 
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable

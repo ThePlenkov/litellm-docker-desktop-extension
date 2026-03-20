@@ -9,7 +9,7 @@ const ddClient = createDockerDesktopClient();
 
 export function App() {
   const [tab, setTab] = useState(0);
-  const healthy = useHealthCheck();
+  const healthy = useHealthCheck(ddClient);
 
   return (
     <Box sx={{ width: '100%', maxWidth: 900, mx: 'auto' }}>

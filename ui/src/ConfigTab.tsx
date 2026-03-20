@@ -21,7 +21,7 @@ export function ConfigTab({ ddClient }: Props) {
   const loadConfig = useCallback(async () => {
     setStatus('Loading...');
     try {
-      const res = await ddClient.extension.vm?.service?.get('/config');
+      const res = await ddClient.extension.vm?.service?.get(':4001/config');
       const text = typeof res === 'string' ? res : JSON.stringify(res, null, 2);
       setConfig(text);
       setStatus('Loaded');
@@ -35,7 +35,7 @@ export function ConfigTab({ ddClient }: Props) {
   const saveConfig = async (): Promise<boolean> => {
     setSaving(true);
     try {
-      await ddClient.extension.vm?.service?.post('/config', config);
+      await ddClient.extension.vm?.service?.post(':4001/config', config);
       toast.success('Config saved');
       setStatus(`Saved at ${new Date().toLocaleTimeString()}`);
       return true;

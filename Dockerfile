@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
 
 # Stage 1: Build the React UI
-FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
+FROM --platform=$BUILDPLATFORM oven/bun:1-alpine AS ui-builder
+ARG BUN_CONFIG_REGISTRY
 WORKDIR /app
-COPY ui/package.json ui/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+COPY ui/package.json ./
+RUN bun install
 COPY ui/ .
-RUN npm run build
+RUN bun run build
 
 # Stage 2: Extension image
 FROM scratch
