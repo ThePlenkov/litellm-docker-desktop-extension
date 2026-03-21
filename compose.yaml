@@ -47,6 +47,8 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-1234}
       - LITELLM_API_KEY=${LITELLM_API_KEY:-}
       - LITELLM_BASE_URL=${LITELLM_BASE_URL:-}
+      - UI_USERNAME=${UI_USERNAME:-admin}
+      - UI_PASSWORD=${UI_PASSWORD:-sk-1234}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -77,5 +79,8 @@ services:
 
 volumes:
   litellm-config:
+    name: litellm-ext-config
   litellm-db:
+    name: litellm-ext-db
   litellm-redis:
+    name: litellm-ext-redis
