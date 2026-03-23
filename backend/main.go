@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var defaultConfig = `# LiteLLM Proxy Configuration
@@ -112,6 +113,39 @@ func main() {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		cors(w)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	})
+
+	// /litellm-model-health — proxy to LiteLLM /health with auth, returns per-model status.
+	http.HandleFunc("/litellm-model-health", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Read the master key from the shared volume (same file the entrypoint uses).
+		masterKey := "sk-1234"
+		if data, err := os.ReadFile(filepath.Join(secretsDir(dataDir), "master_key")); err == nil {
+			if mk := strings.TrimSpace(string(data)); mk != "" {
+				masterKey = mk
+			}
+		}
+		req, err := http.NewRequest("GET", litellmURL+"/health", nil)
+		if err != nil {
+			jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+masterKey)
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"status": "unreachable"})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)

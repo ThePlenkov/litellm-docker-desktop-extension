@@ -5,6 +5,7 @@ import { DashboardTab } from './DashboardTab';
 import { ConfigTab } from './ConfigTab';
 import { SecretsTab } from './SecretsTab';
 import { useHealthCheck } from './useHealthCheck';
+import { useAuthMonitor } from './useAuthMonitor';
 
 declare global {
   interface Window { ddClient?: any; }
@@ -18,6 +19,7 @@ const ddClient = window.ddClient
 export function App() {
   const [tab, setTab] = useState(0);
   const healthy = useHealthCheck();
+  useAuthMonitor(ddClient, healthy);
 
   return (
     <Box sx={{ width: '100%', maxWidth: 900, mx: 'auto' }}>
