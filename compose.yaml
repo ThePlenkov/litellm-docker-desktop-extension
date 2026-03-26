@@ -50,6 +50,8 @@ services:
       - LITELLM_BASE_URL=${LITELLM_BASE_URL:-}
       - UI_USERNAME=${UI_USERNAME:-admin}
       - UI_PASSWORD=${UI_PASSWORD:-sk-1234}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

@@ -38,6 +38,11 @@ litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 600
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -142,6 +147,38 @@ func main() {
 		resp, err := client.Do(req)
 		if err != nil {
 			jsonResp(w, http.StatusBadGateway, map[string]string{"status": "unreachable"})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	})
+
+	// /cache-ping — proxy to LiteLLM /cache/ping with auth, tests Redis connectivity.
+	http.HandleFunc("/cache-ping", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		masterKey := "sk-1234"
+		if data, err := os.ReadFile(filepath.Join(secretsDir(dataDir), "master_key")); err == nil {
+			if mk := strings.TrimSpace(string(data)); mk != "" {
+				masterKey = mk
+			}
+		}
+		req, err := http.NewRequest("GET", litellmURL+"/cache/ping", nil)
+		if err != nil {
+			jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+masterKey)
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"status": "unreachable", "error": err.Error()})
 			return
 		}
 		defer resp.Body.Close()
