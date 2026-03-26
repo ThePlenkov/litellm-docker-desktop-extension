@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,10 +88,129 @@ func secretsConfigPath(dataDir string) string {
 	return filepath.Join(dataDir, "secrets-config.json")
 }
 
+// --- Docker socket client ---
+
+const dockerSocket = "/var/run/docker.sock"
+
+// dockerHTTP makes an HTTP request to the Docker Engine API over the Unix socket.
+func dockerHTTP(method, path string, body io.Reader) (*http.Response, error) {
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", dockerSocket)
+			},
+		},
+		Timeout: 30 * time.Second,
+	}
+	req, err := http.NewRequest(method, "http://docker"+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return client.Do(req)
+}
+
+// findContainerByService returns the container ID for a compose service name.
+func findContainerByService(service string) (string, error) {
+	resp, err := dockerHTTP("GET", "/containers/json", nil)
+	if err != nil {
+		return "", fmt.Errorf("docker API: %w", err)
+	}
+	defer resp.Body.Close()
+	var containers []struct {
+		Id     string            `json:"Id"`
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
+		return "", fmt.Errorf("decode containers: %w", err)
+	}
+	for _, c := range containers {
+		if c.Labels["com.docker.compose.service"] == service {
+			return c.Id, nil
+		}
+	}
+	return "", fmt.Errorf("container for service %q not found", service)
+}
+
+// restartContainer restarts a Docker container by ID.
+func restartContainer(id string) error {
+	resp, err := dockerHTTP("POST", fmt.Sprintf("/containers/%s/restart", id), nil)
+	if err != nil {
+		return fmt.Errorf("restart request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("restart failed (%s): %s", resp.Status, string(body))
+	}
+	return nil
+}
+
+// --- Secret-test mode ---
+
+// runSecretTestServer starts a minimal HTTP server that reads/writes a test
+// secret from the shared volume. Used to verify Docker secrets plumbing.
+func runSecretTestServer(dataDir, addr string) {
+	secretFile := filepath.Join(dataDir, "secrets", "test_secret")
+
+	// Seed a mock value if none exists.
+	os.MkdirAll(filepath.Dir(secretFile), 0o700)
+	if _, err := os.Stat(secretFile); err != nil {
+		os.WriteFile(secretFile, []byte("mock-secret-initial-value"), 0o600)
+		log.Printf("[secret-test] seeded default test_secret")
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/secret", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		switch r.Method {
+		case http.MethodOptions:
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			data, err := os.ReadFile(secretFile)
+			if err != nil {
+				jsonResp(w, http.StatusOK, map[string]string{"value": "", "error": "not found"})
+				return
+			}
+			jsonResp(w, http.StatusOK, map[string]string{"value": strings.TrimSpace(string(data))})
+		case http.MethodPost:
+			body, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(body, &payload) != nil {
+				// Treat raw body as the value.
+				payload.Value = strings.TrimSpace(string(body))
+			}
+			os.MkdirAll(filepath.Dir(secretFile), 0o700)
+			if err := os.WriteFile(secretFile, []byte(strings.TrimSpace(payload.Value)), 0o600); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			jsonResp(w, http.StatusOK, map[string]string{"status": "saved"})
+		default:
+			jsonResp(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		jsonResp(w, http.StatusOK, map[string]string{"status": "ok", "mode": "secret-test"})
+	})
+
+	log.Printf("[secret-test] listening on %s, secret at %s", addr, secretFile)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// --- Main ---
+
 func main() {
 	configPath := flag.String("config", envOr("CONFIG_PATH", "/data/config.yaml"), "path to config.yaml")
 	addr := flag.String("addr", ":"+envOr("PORT", "8080"), "listen address")
 	healthCheck := flag.Bool("health-check", false, "run health check and exit")
+	mode := flag.String("mode", "server", "run mode: server (default) or secret-test")
 	flag.Parse()
 
 	if *healthCheck {
@@ -100,10 +222,20 @@ func main() {
 	}
 
 	dataDir := filepath.Dir(*configPath)
+
+	// Secret-test mode: simple secret reader/writer for PoC validation.
+	if *mode == "secret-test" {
+		runSecretTestServer(dataDir, *addr)
+		return
+	}
+
+	// --- Normal config-server mode ---
+
 	ensureDefault(*configPath)
 	os.MkdirAll(secretsDir(dataDir), 0o700)
 
 	litellmURL := envOr("LITELLM_URL", "http://litellm:4000")
+	secretTestURL := envOr("SECRET_TEST_URL", "http://secret-test:8080")
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -337,6 +469,122 @@ func main() {
 		default:
 			jsonResp(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
+	})
+
+	// --- Docker socket endpoints ---
+
+	// POST /docker/restart — restart a compose service by name.
+	// Body: {"service": "litellm"} or {"service": "secret-test"}
+	http.HandleFunc("/docker/restart", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			jsonResp(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
+			return
+		}
+		var payload struct {
+			Service string `json:"service"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Service == "" {
+			jsonResp(w, http.StatusBadRequest, map[string]string{"error": "need {\"service\": \"name\"}"})
+			return
+		}
+		id, err := findContainerByService(payload.Service)
+		if err != nil {
+			jsonResp(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := restartContainer(id); err != nil {
+			jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		jsonResp(w, http.StatusOK, map[string]string{"status": "restarted", "service": payload.Service, "container": id[:12]})
+	})
+
+	// GET /docker/containers — list running compose containers (debug helper).
+	http.HandleFunc("/docker/containers", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		resp, err := dockerHTTP("GET", "/containers/json", nil)
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	})
+
+	// GET /docker/test-secret — read the test secret via the secret-test service (verify round-trip).
+	http.HandleFunc("/docker/test-secret", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPost {
+			// Write a test secret to the shared volume, then verify via secret-test service.
+			body, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(body, &payload) != nil || payload.Value == "" {
+				jsonResp(w, http.StatusBadRequest, map[string]string{"error": "need {\"value\": \"...\"}"})
+				return
+			}
+			secretFile := filepath.Join(secretsDir(dataDir), "test_secret")
+			if err := os.MkdirAll(secretsDir(dataDir), 0o700); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := os.WriteFile(secretFile, []byte(payload.Value), 0o600); err != nil {
+				jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			// Now read back from the secret-test service to confirm it sees the change.
+			client := &http.Client{Timeout: 5 * time.Second}
+			verifyResp, err := client.Get(secretTestURL + "/secret")
+			if err != nil {
+				jsonResp(w, http.StatusOK, map[string]any{
+					"written": payload.Value,
+					"verify":  "secret-test service unreachable: " + err.Error(),
+					"match":   false,
+				})
+				return
+			}
+			defer verifyResp.Body.Close()
+			var result map[string]string
+			json.NewDecoder(verifyResp.Body).Decode(&result)
+			jsonResp(w, http.StatusOK, map[string]any{
+				"written": payload.Value,
+				"readback": result["value"],
+				"match":   payload.Value == result["value"],
+				"source":  "secret-test",
+			})
+			return
+		}
+		// GET: just proxy to the secret-test service.
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(secretTestURL + "/secret")
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"error": "secret-test unreachable: " + err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		var result map[string]string
+		json.NewDecoder(resp.Body).Decode(&result)
+		jsonResp(w, http.StatusOK, map[string]any{
+			"value":  result["value"],
+			"source": "secret-test",
+		})
 	})
 
 	log.Printf("[config-server] listening on %s, config at %s", *addr, *configPath)

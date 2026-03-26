@@ -6,6 +6,19 @@ services:
       - "4001:8080"
     volumes:
       - litellm-config:/data
+      - /var/run/docker.sock.raw:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "/config-server", "-health-check"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+
+  secret-test:
+    image: ${DESKTOP_PLUGIN_IMAGE}
+    entrypoint: ["/config-server", "-mode", "secret-test"]
+    volumes:
+      - litellm-config:/data
     healthcheck:
       test: ["CMD", "/config-server", "-health-check"]
       interval: 5s
