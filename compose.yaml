@@ -1,6 +1,7 @@
 services:
   config-server:
-    image: litellm/config-server:latest
+    image: ${DESKTOP_PLUGIN_IMAGE}
+    entrypoint: ["/config-server"]
     ports:
       - "4001:8080"
     volumes:
@@ -39,7 +40,7 @@ services:
       start_period: 2s
 
   litellm:
-    image: docker.litellm.ai/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:main-stable
     ports:
       - "4000:4000"
     environment:

@@ -4,7 +4,7 @@ Docker Desktop extension that runs [LiteLLM](https://github.com/BerriAI/litellm)
 
 ## What it does
 
-- Starts the latest **stable** LiteLLM proxy (`docker.litellm.ai/berriai/litellm:main-stable`) on port `4000`
+- Starts the latest **stable** LiteLLM proxy (`ghcr.io/berriai/litellm:main-stable`) on port `4000`
 - Shows a live health indicator inside Docker Desktop
 - **Built-in YAML config editor** — edit `config.yaml` right in the extension and apply changes
 - **Open LiteLLM UI** button launches the admin dashboard in your browser
@@ -114,26 +114,33 @@ docker extension rm litellm/docker-desktop-extension:latest
 
 ```
 .
-├── Dockerfile          # Extension image (FROM scratch)
+├── Dockerfile          # Extension image (builds host + backend binaries, FROM scratch)
 ├── Makefile            # Build/install/update shortcuts
-├── compose.yaml        # LiteLLM + config-server service definitions
+├── compose.yaml        # LiteLLM + config-server + Postgres + Redis services
 ├── icon.svg            # Extension icon
 ├── metadata.json       # Docker Desktop extension metadata
 ├── backend/
-│   ├── Dockerfile      # Config server image
-│   └── server.py       # Lightweight HTTP server for config read/write
+│   ├── go.mod          # Config-server Go module
+│   └── main.go         # Config-server: HTTP API for config & secrets
+├── host/
+│   ├── go.mod          # Secret-helper Go module
+│   └── main.go         # Host binary for running shell commands
 └── ui/
-    └── index.html      # Extension dashboard with config editor
+    └── src/            # React + MUI extension dashboard
 ```
 
 ## Architecture
 
-The extension runs two services:
+The extension runs four services (defined in `compose.yaml`):
 
-1. **litellm** — the LiteLLM proxy, reading config from a shared Docker volume
-2. **config-server** — a lightweight Python HTTP server that reads/writes `config.yaml` on the shared volume
+1. **litellm** — the LiteLLM proxy (`ghcr.io/berriai/litellm:main-stable`), reading config from a shared Docker volume
+2. **config-server** — a Go HTTP server (built into the extension image via `${DESKTOP_PLUGIN_IMAGE}`) that reads/writes `config.yaml` and secrets on the shared volume, and proxies authenticated health checks to LiteLLM
+3. **postgres** — PostgreSQL database for LiteLLM
+4. **redis** — Redis cache
 
-The config is persisted in a Docker named volume (`litellm-config`), so it survives container restarts.
+The config-server binary is compiled in the main `Dockerfile` and embedded in the extension image. The compose service references it via `${DESKTOP_PLUGIN_IMAGE}` — no separate image build required.
+
+Config is persisted in a Docker named volume (`litellm-config`), so it survives container restarts.
 
 ## License
 

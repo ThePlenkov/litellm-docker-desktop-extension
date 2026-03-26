@@ -10,6 +10,12 @@ RUN CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o /out/da
     CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o /out/linux-arm64/secret-helper   . && \
     CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o /out/windows/secret-helper.exe .
 
+# Stage 2: Build the config-server backend (runs inside the Docker Desktop VM)
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
+WORKDIR /src
+COPY backend/go.mod backend/main.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /config-server .
+
 # Stage 3: Extension image
 FROM scratch
 
@@ -27,6 +33,7 @@ COPY metadata.json .
 COPY icon.svg .
 COPY compose.yaml .
 COPY ui/dist ./ui
+COPY --from=backend-builder /config-server /config-server
 COPY --from=host-builder /out/darwin  /host/darwin
 COPY --from=host-builder /out/linux   /host/linux
 COPY --from=host-builder /out/windows /host/windows
