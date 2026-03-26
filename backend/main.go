@@ -320,6 +320,69 @@ func main() {
 		w.Write(body)
 	})
 
+	// /token-check — validate the upstream API token by making a minimal
+	// request directly to the configured base_url.  Returns:
+	//   {"valid": true}               — token accepted by upstream
+	//   {"valid": false, "error": …}  — 401/403 from upstream (expired/invalid)
+	//   {"valid": null, "error": …}   — secrets missing or upstream unreachable
+	http.HandleFunc("/token-check", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		apiKey := readSecret(dataDir, "api_key")
+		baseURL := readSecret(dataDir, "base_url")
+		if apiKey == "" || baseURL == "" {
+			jsonResp(w, http.StatusOK, map[string]any{
+				"valid": nil,
+				"error": "api_key or base_url secret not configured",
+			})
+			return
+		}
+
+		// Find the first model name from config.yaml to use in the probe.
+		model := firstModelFromConfig(*configPath)
+		if model == "" {
+			jsonResp(w, http.StatusOK, map[string]any{
+				"valid": nil,
+				"error": "no models configured in config.yaml",
+			})
+			return
+		}
+
+		// POST /chat/completions with empty messages — just enough to trigger auth.
+		probeBody := fmt.Sprintf(`{"model":%q,"messages":[],"max_tokens":1}`, model)
+		url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+		req, err := http.NewRequest("POST", url, strings.NewReader(probeBody))
+		if err != nil {
+			jsonResp(w, http.StatusOK, map[string]any{"valid": nil, "error": err.Error()})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			jsonResp(w, http.StatusOK, map[string]any{"valid": nil, "error": "upstream unreachable: " + err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			jsonResp(w, http.StatusOK, map[string]any{
+				"valid": false,
+				"error": strings.TrimSpace(string(body)),
+			})
+			return
+		}
+		// Any other status (200, 400, 422, …) means auth passed.
+		jsonResp(w, http.StatusOK, map[string]any{"valid": true})
+	})
+
 	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodOptions:
@@ -504,6 +567,37 @@ func main() {
 		jsonResp(w, http.StatusOK, map[string]string{"status": "restarted", "service": payload.Service, "container": id[:12]})
 	})
 
+	// GET /docker/logs?service=<name>&tail=<n> — fetch container logs via Docker socket.
+	http.HandleFunc("/docker/logs", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		service := r.URL.Query().Get("service")
+		if service == "" {
+			jsonResp(w, http.StatusBadRequest, map[string]string{"error": "need ?service=name"})
+			return
+		}
+		tail := r.URL.Query().Get("tail")
+		if tail == "" {
+			tail = "200"
+		}
+		id, err := findContainerByService(service)
+		if err != nil {
+			jsonResp(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		resp, err := dockerHTTP("GET", fmt.Sprintf("/containers/%s/logs?stdout=true&stderr=true&tail=%s", id, tail), nil)
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.Copy(w, resp.Body)
+	})
+
 	// GET /docker/containers — list running compose containers (debug helper).
 	http.HandleFunc("/docker/containers", func(w http.ResponseWriter, r *http.Request) {
 		cors(w)
@@ -610,6 +704,46 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// readSecret returns the trimmed contents of a named secret file, or "".
+func readSecret(dataDir, name string) string {
+	data, err := os.ReadFile(filepath.Join(secretsDir(dataDir), name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// firstModelFromConfig extracts the first litellm_params.model value from the
+// config YAML.  Uses simple line-scanning (no YAML library) to avoid adding a
+// dependency.
+func firstModelFromConfig(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	// Look for "model: <value>" lines under litellm_params sections.
+	// The pattern is: indented "model:" whose value is NOT a top-level key.
+	inParams := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "litellm_params:" {
+			inParams = true
+			continue
+		}
+		if inParams && strings.HasPrefix(trimmed, "model:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+			if val != "" {
+				return val
+			}
+		}
+		// Reset if we hit a non-indented line (new section).
+		if inParams && len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			inParams = false
+		}
+	}
+	return ""
 }
 
 // mask returns a masked version of the value (first 4 chars visible).

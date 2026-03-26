@@ -29,6 +29,9 @@ LABEL org.opencontainers.image.title="LiteLLM" \
       com.docker.extension.publisher-url="https://github.com/berriai/litellm" \
       com.docker.extension.changelog=""
 
+# CA certificates so config-server can make HTTPS calls (e.g. /token-check)
+COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 COPY metadata.json .
 COPY icon.svg .
 COPY compose.yaml .
