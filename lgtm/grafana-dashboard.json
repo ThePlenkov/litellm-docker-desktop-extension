@@ -1,0 +1,1045 @@
+{
+  "__inputs": [
+    { "name": "DS_TEMPO", "label": "Tempo", "type": "datasource", "pluginId": "tempo" },
+    { "name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "pluginId": "prometheus" },
+    { "name": "DS_LOKI", "label": "Loki", "type": "datasource", "pluginId": "loki" }
+  ],
+  "title": "LiteLLM Proxy — Observability",
+  "uid": "litellm-proxy-observability",
+  "version": 2,
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "tags": ["litellm", "proxy", "compressor", "otel"],
+  "templating": {
+    "list": [
+      {
+        "name": "tempo_ds",
+        "type": "datasource",
+        "query": "tempo",
+        "current": { "text": "Tempo", "value": "tempo" }
+      },
+      {
+        "name": "prometheus_ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" }
+      },
+      {
+        "name": "loki_ds",
+        "type": "datasource",
+        "query": "loki",
+        "current": { "text": "Loki", "value": "loki" }
+      }
+    ]
+  },
+  "panels": [
+
+    {
+      "type": "row",
+      "title": "LiteLLM Proxy — Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total Requests",
+      "description": "Total LLM requests (span_name=litellm_request). Requires OTEL Collector spanmetrics.",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"litellm_request\"}[$__range])) or vector(0)",
+          "legendFormat": "requests"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Avg Latency",
+      "description": "Average request duration (ms) across all LLM calls",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_sum{span_name=\"litellm_request\"}[5m])) / sum(rate(traces_spanmetrics_latency_count{span_name=\"litellm_request\"}[5m]))",
+          "legendFormat": "latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2000 },
+              { "color": "red", "value": 5000 }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Error Rate",
+      "description": "Percentage of LLM requests that returned errors",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"litellm_request\", status_code=\"STATUS_CODE_ERROR\"}[$__range])) / sum(increase(traces_spanmetrics_calls_total{span_name=\"litellm_request\"}[$__range])) * 100 or vector(0)",
+          "legendFormat": "error %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          },
+          "noValue": "0%"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Avg Tokens / Request",
+      "description": "Average total tokens per LLM request (from gen_ai.usage.total_tokens trace attribute)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | avg_over_time(span.gen_ai.usage.total_tokens)",
+          "step": "1m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 100 }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Prompt Compressions",
+      "description": "Total prompt compression events in the selected range",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"prompt_compressor\"}[$__range])) or vector(0)",
+          "legendFormat": "compressions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Tools Compressions",
+      "description": "Total tool definition compression events in the selected range",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\"}[$__range])) or vector(0)",
+          "legendFormat": "compressions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Request Rate / min",
+      "description": "LLM request throughput over time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=\"litellm_request\"}[5m])) * 60",
+          "legendFormat": "requests/min"
+        },
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=\"litellm_request\", status_code=\"STATUS_CODE_ERROR\"}[5m])) * 60",
+          "legendFormat": "errors/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" },
+          "unit": "cpm"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "errors/min" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 10 }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Request Latency (p50 / p95 / p99)",
+      "description": "LLM request duration percentiles. Requires OTEL Collector spanmetrics with histogram.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(traces_spanmetrics_latency_bucket{span_name=\"litellm_request\"}[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{span_name=\"litellm_request\"}[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(traces_spanmetrics_latency_bucket{span_name=\"litellm_request\"}[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" },
+          "unit": "ms"
+        }
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Per-Model Analysis",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Recent LLM Requests",
+      "description": "Individual LLM requests from Tempo traces. Shows model, tokens, cost, and duration.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"litellm_request\" }",
+          "tableType": "spans",
+          "limit": 30
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "traceID": true,
+              "duration": true,
+              "gen_ai.request.model": true,
+              "gen_ai.response.model": true,
+              "gen_ai.system": true,
+              "gen_ai.usage.input_tokens": true,
+              "gen_ai.usage.output_tokens": true,
+              "gen_ai.usage.total_tokens": true,
+              "gen_ai.cost.total_cost": true,
+              "gen_ai.response.finish_reasons": true,
+              "gen_ai.operation.name": true,
+              "llm.is_streaming": true,
+              "llm.user": true,
+              "error.type": true,
+              "error.message": true
+            },
+            "renameByName": {
+              "gen_ai.request.model": "Model",
+              "gen_ai.response.model": "Response Model",
+              "gen_ai.system": "Provider",
+              "gen_ai.usage.input_tokens": "Input Tokens",
+              "gen_ai.usage.output_tokens": "Output Tokens",
+              "gen_ai.usage.total_tokens": "Total Tokens",
+              "gen_ai.cost.total_cost": "Cost ($)",
+              "gen_ai.response.finish_reasons": "Finish Reason",
+              "gen_ai.operation.name": "Operation",
+              "llm.is_streaming": "Streaming",
+              "llm.user": "User",
+              "error.type": "Error Type",
+              "error.message": "Error"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Requests by Model",
+      "description": "Request rate per model from Tempo TraceQL metrics",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | rate() by (span.gen_ai.request.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Token Usage by Model",
+      "description": "Average total tokens per request, broken down by model",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | avg_over_time(span.gen_ai.usage.total_tokens) by (span.gen_ai.request.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } },
+          "unit": "short",
+          "displayName": "avg tokens"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Cost by Model",
+      "description": "Average cost per request by model (from gen_ai.cost.total_cost trace attribute)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | avg_over_time(span.gen_ai.cost.total_cost) by (span.gen_ai.request.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "always" },
+          "unit": "currencyUSD",
+          "displayName": "avg cost/req"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Latency by Model (p50)",
+      "description": "Median request latency per model from Tempo TraceQL metrics",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | quantile_over_time(duration, 0.5) by (span.gen_ai.request.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "pointSize": 5, "showPoints": "always" },
+          "unit": "ns",
+          "displayName": "latency (p50)"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Input vs Output Tokens",
+      "description": "Average prompt (input) vs completion (output) tokens per request",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | avg_over_time(span.gen_ai.usage.input_tokens)",
+          "step": "30s",
+          "legendFormat": "input (prompt)"
+        },
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"litellm_request\" } | avg_over_time(span.gen_ai.usage.output_tokens)",
+          "step": "30s",
+          "legendFormat": "output (completion)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Recent Errors",
+      "description": "LLM requests that returned errors, with provider and error details",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"litellm_request\" && status = error }",
+          "tableType": "spans",
+          "limit": 20
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "traceID": true,
+              "duration": true,
+              "gen_ai.request.model": true,
+              "gen_ai.system": true,
+              "error.type": true,
+              "error.message": true,
+              "error.llm_provider": true,
+              "error.code": true
+            },
+            "renameByName": {
+              "gen_ai.request.model": "Model",
+              "gen_ai.system": "Provider",
+              "error.type": "Error Type",
+              "error.message": "Error Message",
+              "error.llm_provider": "LLM Provider",
+              "error.code": "Code"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "Prompt Compressor — Token Savings",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "collapsed": false
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Avg Compression Latency",
+      "description": "Average time spent in prompt compression (includes summarization LLM call)",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 49 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_sum{span_name=\"prompt_compressor\"}[5m])) / sum(rate(traces_spanmetrics_latency_count{span_name=\"prompt_compressor\"}[5m]))",
+          "legendFormat": "latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2000 },
+              { "color": "red", "value": 5000 }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Avg Tools Latency",
+      "description": "Average time spent in tool compression (mostly sub-ms for rule-based)",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 49 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_latency_sum{span_name=\"tools_compressor\"}[5m])) / sum(rate(traces_spanmetrics_latency_count{span_name=\"tools_compressor\"}[5m]))",
+          "legendFormat": "latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 18,
+      "type": "bargauge",
+      "title": "Compressor Errors",
+      "description": "Compression failures (callback fell back to original data)",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 49 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"prompt_compressor\", status_code=\"STATUS_CODE_ERROR\"}[$__range])) or vector(0)",
+          "legendFormat": "prompt errors"
+        },
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\", status_code=\"STATUS_CODE_ERROR\"}[$__range])) or vector(0)",
+          "legendFormat": "tools errors"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Tools Cache Hit Rate",
+      "description": "Percentage of tool compression requests served from cache",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 49 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\", tools_compressor_cache_hit=\"true\"}[$__range])) / sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\"}[$__range])) * 100",
+          "legendFormat": "hit rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 80 }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Compression Events / min",
+      "description": "Rate of compression events for both compressors",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 49 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=\"prompt_compressor\"}[5m])) * 60",
+          "legendFormat": "prompt_compressor"
+        },
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{span_name=\"tools_compressor\"}[5m])) * 60",
+          "legendFormat": "tools_compressor"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" },
+          "unit": "cpm"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Recent Prompt Compressions",
+      "description": "Individual compression events from Tempo traces with token savings details",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 53 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"prompt_compressor\" }",
+          "tableType": "spans",
+          "limit": 20
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "spanID": true,
+              "traceID": true,
+              "duration": true,
+              "prompt_compressor.model": true,
+              "prompt_compressor.total_tokens": true,
+              "prompt_compressor.old_tokens": true,
+              "prompt_compressor.summary_tokens": true,
+              "prompt_compressor.tokens_saved": true,
+              "prompt_compressor.compression_ratio": true,
+              "prompt_compressor.old_messages": true,
+              "prompt_compressor.total_messages": true,
+              "prompt_compressor.recent_messages": true,
+              "prompt_compressor.max_input_tokens": true,
+              "prompt_compressor.threshold": true,
+              "prompt_compressor.summary_budget_tokens": true
+            },
+            "renameByName": {
+              "prompt_compressor.model": "Model",
+              "prompt_compressor.total_tokens": "Total Tokens",
+              "prompt_compressor.old_tokens": "Old Tokens",
+              "prompt_compressor.summary_tokens": "Summary Tokens",
+              "prompt_compressor.tokens_saved": "Tokens Saved",
+              "prompt_compressor.compression_ratio": "Ratio",
+              "prompt_compressor.old_messages": "Old Msgs",
+              "prompt_compressor.total_messages": "Total Msgs",
+              "prompt_compressor.recent_messages": "Recent Msgs",
+              "prompt_compressor.max_input_tokens": "Max Input",
+              "prompt_compressor.threshold": "Threshold",
+              "prompt_compressor.summary_budget_tokens": "Summary Budget"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Tokens Saved per Compression",
+      "description": "How many tokens each prompt compression event saved (from trace attributes)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 63 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"prompt_compressor\" } | quantile_over_time(span.prompt_compressor.tokens_saved, 0.5) by (span.prompt_compressor.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "pointSize": 5 },
+          "unit": "short",
+          "displayName": "tokens saved (p50)"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Compression Ratio Over Time",
+      "description": "Lower is better: summary_tokens / old_tokens (0.1 = 90% reduction)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 63 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"prompt_compressor\" } | avg_over_time(span.prompt_compressor.compression_ratio) by (span.prompt_compressor.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "pointSize": 5, "showPoints": "always" },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "displayName": "compression ratio"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Context Size at Trigger",
+      "description": "Total token count when prompt compression was triggered",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 71 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"prompt_compressor\" } | quantile_over_time(span.prompt_compressor.total_tokens, 0.5) by (span.prompt_compressor.model)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" },
+          "unit": "short",
+          "displayName": "tokens at trigger (p50)"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Messages Compressed vs Kept",
+      "description": "How many old messages got summarized vs kept as recent",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 71 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"prompt_compressor\" } | avg_over_time(span.prompt_compressor.old_messages)",
+          "step": "30s",
+          "legendFormat": "old (summarized)"
+        },
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"prompt_compressor\" } | avg_over_time(span.prompt_compressor.recent_messages)",
+          "step": "30s",
+          "legendFormat": "recent (kept)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        }
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Tools Compressor — Definition Savings",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 79 },
+      "collapsed": false
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Recent Tool Compressions",
+      "description": "Individual tool compression events from Tempo traces",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 80 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"tools_compressor\" }",
+          "tableType": "spans",
+          "limit": 20
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "spanID": true,
+              "traceID": true,
+              "duration": true,
+              "tools_compressor.tool_count": true,
+              "tools_compressor.cache_hit": true,
+              "tools_compressor.original_chars": true,
+              "tools_compressor.compressed_chars": true,
+              "tools_compressor.chars_saved": true,
+              "tools_compressor.savings_pct": true,
+              "tools_compressor.used_llm": true
+            },
+            "renameByName": {
+              "tools_compressor.tool_count": "Tools",
+              "tools_compressor.cache_hit": "Cache Hit",
+              "tools_compressor.original_chars": "Original",
+              "tools_compressor.compressed_chars": "Compressed",
+              "tools_compressor.chars_saved": "Saved",
+              "tools_compressor.savings_pct": "Savings %",
+              "tools_compressor.used_llm": "Used LLM"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Characters Saved per Compression",
+      "description": "Tool definition size reduction in characters (cache misses only)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"tools_compressor\" && span.tools_compressor.cache_hit = false } | quantile_over_time(span.tools_compressor.chars_saved, 0.5)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 60 },
+          "unit": "short",
+          "displayName": "chars saved (p50)"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Savings % Over Time",
+      "description": "Percentage of tool definition characters saved (cache misses only)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"tools_compressor\" && span.tools_compressor.cache_hit = false } | avg_over_time(span.tools_compressor.savings_pct)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "always" },
+          "unit": "percent",
+          "displayName": "savings %"
+        }
+      }
+    },
+    {
+      "id": 29,
+      "type": "piechart",
+      "title": "Cache Hit vs Miss",
+      "description": "Tool compressor cache effectiveness",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 96 },
+      "datasource": { "uid": "${prometheus_ds}" },
+      "targets": [
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\", tools_compressor_cache_hit=\"true\"}[$__range])) or vector(0)",
+          "legendFormat": "cache hit"
+        },
+        {
+          "expr": "sum(increase(traces_spanmetrics_calls_total{span_name=\"tools_compressor\", tools_compressor_cache_hit=\"false\"}[$__range])) or vector(0)",
+          "legendFormat": "cache miss"
+        }
+      ],
+      "fieldConfig": { "defaults": {} },
+      "options": { "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Tool Count per Request",
+      "description": "Number of tools in requests that triggered compression",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 96 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"tools_compressor\" } | avg_over_time(span.tools_compressor.tool_count)",
+          "step": "30s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "pointSize": 5, "showPoints": "always" },
+          "unit": "short",
+          "displayName": "avg tools/request"
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Original vs Compressed Size",
+      "description": "Tool definition size before and after compression (cache misses only)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 96 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"tools_compressor\" && span.tools_compressor.cache_hit = false } | avg_over_time(span.tools_compressor.original_chars)",
+          "step": "30s",
+          "legendFormat": "original"
+        },
+        {
+          "queryType": "traceqlMetrics",
+          "query": "{ name = \"tools_compressor\" && span.tools_compressor.cache_hit = false } | avg_over_time(span.tools_compressor.compressed_chars)",
+          "step": "30s",
+          "legendFormat": "compressed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" },
+          "unit": "short"
+        }
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Traces & Logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 104 },
+      "collapsed": false
+    },
+    {
+      "id": 32,
+      "type": "traces",
+      "title": "All LLM Traces",
+      "description": "Click a trace to see full span details including model, tokens, cost, and compressor activity",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 105 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"litellm_request\" }",
+          "limit": 15
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "traces",
+      "title": "Prompt Compressor Traces",
+      "description": "Click a trace to see full span details with all compression attributes",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 105 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"prompt_compressor\" }",
+          "limit": 10
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "traces",
+      "title": "Tools Compressor Traces",
+      "description": "Click a trace to see full span details with all compression attributes",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 105 },
+      "datasource": { "uid": "${tempo_ds}" },
+      "targets": [
+        {
+          "queryType": "traceqlSearch",
+          "query": "{ name = \"tools_compressor\" }",
+          "limit": 10
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "logs",
+      "title": "LiteLLM Logs",
+      "description": "All log output from the litellm container via Loki",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 113 },
+      "datasource": { "uid": "${loki_ds}" },
+      "targets": [
+        {
+          "expr": "{container=~\".*litellm.*\"}",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 36,
+      "type": "logs",
+      "title": "Compressor Logs",
+      "description": "Filtered log output from prompt_compressor and tools_compressor callbacks",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 113 },
+      "datasource": { "uid": "${loki_ds}" },
+      "targets": [
+        {
+          "expr": "{container=~\".*litellm.*\"} |~ \"(prompt_compressor|tools_compressor)\"",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

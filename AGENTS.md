@@ -99,6 +99,8 @@ There is no test suite yet. Verify changes manually:
 
 ```
 backend/main.go       — config-server: HTTP endpoints, Docker socket client, token validation
+backend/prompt_compressor.py — Python callback for context compression (go:embed)
+backend/tools_compressor.py  — Python callback for tools compression (go:embed)
 host/main.go          — secret-helper: runs shell commands on host
 ui/src/App.tsx        — Root: 3 tabs + health chip
 ui/src/ConfigTab.tsx  — Monaco YAML editor with LiteLLM schema
@@ -130,6 +132,104 @@ Dockerfile            — 3-stage build (host-builder, backend-builder, scratch 
   ```
 - Other useful per-model health params: `health_check_model` (for wildcards), `health_check_timeout`
 
+## Prompt Compressor (Context Summarisation Callback)
+
+A custom LiteLLM `async_pre_call_hook` that automatically summarises old conversation history when the token count exceeds a configurable fraction of the model's context window. This reduces token usage for long-running agent sessions without losing important context.
+
+### How it works
+1. On every `/chat/completions` request, the callback counts tokens in `messages[]`
+2. If tokens exceed `COMPRESSOR_THRESHOLD` (default 60%) of the model's max input, it triggers
+3. Messages are split into: system messages (kept), old messages (summarised), recent messages (kept intact)
+4. The split respects tool-call / tool-response chains — they are never broken apart
+5. Old messages are summarised by a cheap model (default `gpt-4o-mini`) in a single call
+6. The summary replaces the old messages; the request proceeds with a much smaller context
+
+### Enabling
+In `config.yaml`, uncomment under `litellm_settings` and add `callback_settings`:
+```yaml
+litellm_settings:
+  callbacks:
+    - prompt_compressor.proxy_handler_instance
+
+callback_settings:
+  prompt_compressor:
+    model: gpt-4o-mini
+    threshold: 0.6
+    min_tokens: 10000
+    min_messages: 10
+    keep_recent: 5
+    summary_ratio: 0.1
+```
+
+### Configuration (via `callback_settings` in config.yaml)
+| Key | Default | Description |
+|-----|---------|-------------|
+| `model` | `gpt-4o-mini` | Model used for the summarisation call |
+| `threshold` | `0.6` | Fraction of context window that triggers compression |
+| `min_tokens` | `10000` | Absolute token floor — skip compression if total tokens are below this |
+| `min_messages` | `10` | Minimum non-system messages before compression triggers |
+| `keep_recent` | `5` | Minimum number of recent messages always preserved |
+| `summary_ratio` | `0.1` | Summary target as fraction of old messages' token count (min 100 tokens) |
+
+### Deployment mechanism
+- `backend/prompt_compressor.py` is embedded via `//go:embed` in `backend/main.go`
+- Config-server writes the embedded content to `/data/prompt_compressor.py` on every startup
+- `PYTHONPATH=/data` on the litellm container makes it importable
+- LiteLLM discovers `proxy_handler_instance` in the module
+
+### Thinking/reasoning token handling
+- `litellm.token_counter()` silently skips `thinking_blocks` (list-of-dict) but counts `reasoning_content` (str)
+- The compressor estimates thinking block tokens (~4 chars/token) and adds them to the count for threshold checks
+- Before summarization, `reasoning_content` and `thinking_blocks` are stripped from old messages — the model's internal scratchpad is not useful context and can be the majority of the token cost
+- Recent messages (kept intact) retain their thinking blocks — required by Anthropic's API for multi-turn
+
+## Tools Compressor (Tool Definition Compression Callback)
+
+A custom LiteLLM `async_pre_call_hook` that reduces token usage from the `tools[]` array in chat/completions requests. Agent sessions with 50-100+ tools can spend 10-40K tokens per request just on tool definitions — before any conversation starts.
+
+### How it works
+1. On every `/chat/completions` request, checks the `tools[]` array
+2. If the number of tools exceeds `min_tools` (default 5), compression triggers
+3. **Phase 1 (rule-based, zero cost, always on):**
+   - Strips `description` from all parameter schemas recursively
+   - Truncates tool-level descriptions to `max_desc` chars (default 200)
+   - Removes examples, markdown fences, and trailing noise from descriptions
+4. **Phase 2 (LLM-based, optional):**
+   - Rewrites remaining long descriptions as concise one-liners using a cheap model
+   - Only runs when `use_llm: true` is set in callback_settings
+5. Compressed tool sets are cached by content hash — tools that don't change between requests are never reprocessed
+
+### Enabling
+In `config.yaml`, add under `litellm_settings` and `callback_settings`:
+```yaml
+litellm_settings:
+  callbacks:
+    - tools_compressor.proxy_handler_instance      # reduces tool definition tokens
+    - prompt_compressor.proxy_handler_instance     # reduces conversation history tokens (optional)
+
+callback_settings:
+  tools_compressor:
+    min_tools: 5
+    max_desc: 200
+    strip_param_desc: true
+```
+
+### Configuration (via `callback_settings` in config.yaml)
+| Key | Default | Description |
+|-----|---------|-------------|
+| `min_tools` | `5` | Minimum tool count to trigger compression |
+| `max_desc` | `200` | Max chars per tool description after rule-based truncation |
+| `strip_param_desc` | `true` | Strip parameter descriptions from schemas |
+| `use_llm` | `false` | Enable LLM-based Phase 2 description rewriting |
+| `llm_model` | `gpt-4o-mini` | Model for LLM compression (Phase 2 only) |
+| `llm_max_desc` | `80` | Max chars per description after LLM rewrite |
+
+### Deployment mechanism
+- `backend/tools_compressor.py` is embedded via `//go:embed` in `backend/main.go`
+- Config-server writes the embedded content to `/data/tools_compressor.py` on every startup
+- `PYTHONPATH=/data` on the litellm container makes it importable
+- LiteLLM discovers `proxy_handler_instance` in the module
+
 ## Known Gotchas
 
 - **UI must be pre-built** before `docker build` — the Dockerfile does NOT build the frontend
@@ -142,3 +242,14 @@ Dockerfile            — 3-stage build (host-builder, backend-builder, scratch 
 - **Non-recoverable vs recoverable auth errors:** "does not have access to" (model-level permission) is different from "Invalid token" (expired credential). Only the latter is fixable by refreshing secrets. The UI should distinguish these in notifications.
 - **Model API version pinning:** When configuring an OpenAI-compatible proxy endpoint as `api_base`, do NOT pin to a specific app version (e.g. `/app:12`). Use the unversioned URL so models are always served from the latest version.
 - **Docker Compose native `secrets:` cannot be used here.** Three reasons: (1) Compose secrets are static (resolved at `docker compose up` time), but our secrets are written at runtime by config-server and refreshed by the host binary — updating a compose secret requires recreating all services; (2) `file:` source paths are host-relative, but our secrets live inside the `litellm-ext-config` Docker volume with no stable host path, and the extension framework manages the compose lifecycle; (3) LiteLLM doesn't support the `_FILE` env var convention (like MySQL/Postgres do), so we'd still need the shell entrypoint to `cat` files and `export` them as env vars. The current design (shared volume + shell entrypoint) is the correct pattern for runtime-writable secrets in a Docker Desktop extension.
+- **Prompt Compressor callback must use `metadata={"_prompt_compressor_internal": True}`** on its own summarisation call to prevent infinite recursion through the same `async_pre_call_hook`.
+- **Tools Compressor callback must use `metadata={"_tools_compressor_internal": True}`** on its own LLM calls (Phase 2) to prevent infinite recursion through the same `async_pre_call_hook`.
+- **Custom callback format in `config.yaml`:** LiteLLM resolves custom callbacks via `get_instance_fn()` which splits by `.` — last part is the instance name, rest is the module path. Use `module.proxy_handler_instance` (e.g. `prompt_compressor.proxy_handler_instance`), NOT bare module names like `prompt_compressor` (resolves to empty module path → crash). The config file is at `/data/config.yaml` so LiteLLM looks for `/data/<module>.py`.
+- **`call_type` in `async_pre_call_hook` is `"acompletion"`, NOT `"completion"`:** LiteLLM proxy routes all requests through async code paths. Custom callbacks must check `call_type not in ("completion", "acompletion")` — checking only `"completion"` will cause the hook to silently skip every proxy request.
+- **Custom callbacks must use `llm_router` for internal LLM calls:** Direct `litellm.acompletion()` inside a callback does NOT have access to API keys configured in `config.yaml`. Import `llm_router` from `litellm.proxy.proxy_server` and use `llm_router.acompletion()` instead. Fall back to `litellm.acompletion()` only for standalone (non-proxy) usage.
+- **`litellm.get_model_info()` returns built-in DB values, not config values:** For models like `openai/ml-asset:static-model/gpt-5-nano`, it may return wrong `max_input_tokens` from litellm's internal model database rather than the `model_info` in `config.yaml`. Callbacks should treat `get_model_info` failures as non-fatal and fall back to a default (e.g. 128000).
+- **`callbacks/` directory does not exist** — the canonical source for both callback files is `backend/`. They are embedded via `//go:embed` in `backend/main.go` and written to `/data/` at runtime by config-server.
+- **Rapid iteration on callbacks:** `make update` may not restart containers with new embedded files if Docker cache hits. For development, write Python files directly to the volume via `docker exec` on the litellm container, then restart litellm via `POST /docker/restart`. For production builds, use `docker build --no-cache`.
+- **LiteLLM `general_settings` bug (v1.82.x):** `ProxyConfig.load_config()` does NOT declare `general_settings` in its `global` statement, so `general_settings = config.get(...)` creates a local variable. However, the caller at `proxy_server.py:828` assigns the return value back to the module-level `general_settings`, so it works at startup. But the initial in-memory dict is empty if you test from a separate Python process — don't be misled by `python3 -c` checks inside the container.
+- **`store_prompts_in_spend_logs` needs env var fallback:** Despite being in `config.yaml`'s `general_settings`, this setting may not survive config reloads (the DB's `LiteLLM_Config` table can override it). Set `STORE_PROMPTS_IN_SPEND_LOGS=true` as a container env var for reliability. Without it, `proxy_server_request`, `messages`, and `response` columns in `LiteLLM_SpendLogs` will all be `{}`.
+- **`messages` column only populated for `_arealtime` calls (v1.82.x):** `_get_messages_for_spend_logs_payload` in `spend_tracking_utils.py` has a `call_type == "_arealtime"` filter — regular `acompletion` calls get `{}` for messages even with `store_prompts_in_spend_logs=true`. Request data is instead stored in the `proxy_server_request` column (full request body). The LiteLLM UI reads from both columns.

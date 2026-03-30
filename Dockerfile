@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o /out/da
 # Stage 2: Build the config-server backend (runs inside the Docker Desktop VM)
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
 WORKDIR /src
-COPY backend/go.mod backend/main.go ./
+COPY backend/ ./
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /config-server .
 
 # Stage 3: Extension image

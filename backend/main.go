@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +15,12 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed prompt_compressor.py
+var promptCompressorPy string
+
+//go:embed tools_compressor.py
+var toolsCompressorPy string
 
 var defaultConfig = `# LiteLLM Proxy Configuration
 # https://docs.litellm.ai/docs/proxy/configs
@@ -46,6 +53,29 @@ litellm_settings:
     type: redis
     host: redis
     port: 6379
+  # Prompt Compressor: summarises old conversation history when context grows
+  # beyond a threshold of the model's window.
+  #
+  # Tools Compressor: strips verbose descriptions from tool definitions to
+  # save context-window tokens in agent sessions with many tools.
+  #
+  # Uncomment below to enable (configure via callback_settings):
+  # callbacks:
+  #   - tools_compressor.proxy_handler_instance
+  #   - prompt_compressor.proxy_handler_instance
+
+# callback_settings:
+#   tools_compressor:
+#     min_tools: 5
+#     max_desc: 200
+#     strip_param_desc: true
+#   prompt_compressor:
+#     model: gpt-4o-mini
+#     threshold: 0.6
+#     min_tokens: 10000
+#     min_messages: 10
+#     keep_recent: 5
+#     summary_ratio: 0.1
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -170,6 +200,8 @@ func main() {
 
 	ensureDefault(*configPath)
 	os.MkdirAll(secretsDir(dataDir), 0o700)
+	deployPromptCompressor(dataDir)
+	deployToolsCompressor(dataDir)
 
 	litellmURL := envOr("LITELLM_URL", "http://litellm:4000")
 
@@ -247,6 +279,51 @@ func main() {
 		resp, err := client.Do(req)
 		if err != nil {
 			jsonResp(w, http.StatusBadGateway, map[string]string{"status": "unreachable", "error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	})
+
+	// /litellm-proxy — forward POST requests to LiteLLM with the master key.
+	// Proxies the request path suffix to LiteLLM, e.g.
+	//   POST /litellm-proxy/chat/completions → POST http://litellm:4000/chat/completions
+	http.HandleFunc("/litellm-proxy/", func(w http.ResponseWriter, r *http.Request) {
+		cors(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		masterKey := "sk-1234"
+		if data, err := os.ReadFile(filepath.Join(secretsDir(dataDir), "master_key")); err == nil {
+			if mk := strings.TrimSpace(string(data)); mk != "" {
+				masterKey = mk
+			}
+		}
+		// Strip the /litellm-proxy prefix to get the target path.
+		targetPath := strings.TrimPrefix(r.URL.Path, "/litellm-proxy")
+		if targetPath == "" {
+			targetPath = "/"
+		}
+		targetURL := litellmURL + targetPath
+		req, err := http.NewRequest("POST", targetURL, r.Body)
+		if err != nil {
+			jsonResp(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+masterKey)
+		client := &http.Client{Timeout: 120 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			jsonResp(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		defer resp.Body.Close()
@@ -555,6 +632,28 @@ func main() {
 
 	log.Printf("[config-server] listening on %s, config at %s", *addr, *configPath)
 	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+// deployPromptCompressor writes the embedded prompt_compressor.py to the data
+// directory on every startup so the LiteLLM container can import it.
+func deployPromptCompressor(dataDir string) {
+	dst := filepath.Join(dataDir, "prompt_compressor.py")
+	if err := os.WriteFile(dst, []byte(promptCompressorPy), 0o644); err != nil {
+		log.Printf("[config-server] warning: could not write prompt_compressor.py: %v", err)
+		return
+	}
+	log.Printf("[config-server] deployed prompt_compressor.py to %s", dst)
+}
+
+// deployToolsCompressor writes the embedded tools_compressor.py to the data
+// directory on every startup so the LiteLLM container can import it.
+func deployToolsCompressor(dataDir string) {
+	dst := filepath.Join(dataDir, "tools_compressor.py")
+	if err := os.WriteFile(dst, []byte(toolsCompressorPy), 0o644); err != nil {
+		log.Printf("[config-server] warning: could not write tools_compressor.py: %v", err)
+		return
+	}
+	log.Printf("[config-server] deployed tools_compressor.py to %s", dst)
 }
 
 func ensureDefault(path string) {

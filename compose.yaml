@@ -53,6 +53,13 @@ services:
       - UI_PASSWORD=${UI_PASSWORD:-sk-1234}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # Store request messages and responses in SpendLogs for the LiteLLM UI.
+      # The config.yaml general_settings.store_prompts_in_spend_logs is not
+      # picked up due to a LiteLLM bug (missing `global` in load_config),
+      # so we set the env var fallback instead.
+      - STORE_PROMPTS_IN_SPEND_LOGS=true
+      # Make /data importable so LiteLLM can load callback modules
+      - PYTHONPATH=/data
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
